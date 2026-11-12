@@ -4,7 +4,9 @@ import base64
 import hashlib
 import hmac
 import json
+from pathlib import Path
 from queue import Empty, Queue
+import sys
 from threading import Event, Thread
 import tkinter as tk
 
@@ -113,6 +115,8 @@ class RemoteApp:
         self.isotope_buttons = []
 
         root.title("QuDit Lab Remote")
+        if sys.platform == "win32":
+            root.iconbitmap(str(Path(__file__).with_name("qudit-lab.ico")))
         root.configure(bg=PAPER)
         root.geometry("960x650")
         root.minsize(790, 545)

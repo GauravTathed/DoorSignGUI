@@ -4,7 +4,7 @@ The lab touchscreen reports laser, ion trap, and experiment status. A second Ras
 
 ## Windows remote control
 
-[Download QuDit Lab Remote for Windows x64](https://github.com/GauravTathed/DoorSignGUI/releases/download/qudit-door-v1.0.0/QuDit-Lab-Remote-Windows-x64.zip)
+[Download QuDit Lab Remote for Windows x64](https://github.com/GauravTathed/DoorSignGUI/releases/download/qudit-door-v1.0.1/QuDit-Lab-Remote-Windows-x64.zip)
 
 Extract the ZIP and run `QuDit Lab Remote.exe`. Connect to `welcome-pi.local` on port 22 with your Pi account. The app verifies the touchscreen Pi’s SSH host key. If the Pi is reimaged or replaced, verify its new ED25519 fingerprint and update `PI_KEY` in `pc_controller.py` before rebuilding the app.
 
@@ -51,5 +51,9 @@ Use `/home/pi/lab-status-display/start-door-display.sh` on the relay. Status sta
 
 - `qudit_dashboard.py`, `door_sign.py`, `ion_display.py`, and `temperature_display.py` implement the Pi dashboard, touchscreen, and door graphics. `ion-trapped.gif` is the optional trapped-ion clip.
 - `door_feed.py`, `relay_display.py`, and `remote_control.py` provide the read-only door feed, HDMI viewer, and SSH interface for the Windows controller.
-- `pc_controller.py` is the Windows app source. It uses Tkinter and Paramiko. To build an executable, install Paramiko and PyInstaller into a Windows Python environment and run `python -m PyInstaller --onefile --windowed --name "QuDit Lab Remote" pc_controller.py`.
+- `pc_controller.py` is the Windows app source. It uses Tkinter and Paramiko. To build an executable, install Paramiko and PyInstaller into a Windows Python environment and run the following from this directory.
+
+  ```powershell
+  python -m PyInstaller --onefile --windowed --name "QuDit Lab Remote" --icon qudit-lab.ico --add-data "qudit-lab.ico:." pc_controller.py
+  ```
 - `server.py`, `index.html`, `app.js`, and `styles.css` are the original browser prototype. Run `python3 server.py` and visit `http://127.0.0.1:8765/` to try it locally.
