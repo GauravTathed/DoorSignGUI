@@ -1,4 +1,13 @@
 # DoorSignGUI
+
+## QuDit Lab status display
+
+The current Raspberry Pi touchscreen, HDMI relay, and Windows controller are in [lab-status-display](lab-status-display/README.md).
+
+[Download QuDit Lab Remote for Windows x64](https://github.com/GauravTathed/DoorSignGUI/releases/download/qudit-door-v1.0.0/QuDit-Lab-Remote-Windows-x64.zip)
+
+## Original Java door sign
+
 Laser Active Door Sign
 
 This project is to develop a graphical user interface (GUI) for a "Laser Active" door sign.  The platform is the Raspberry Pi model B, using the AdaFruit Industries 2.2" PiTFT display.  The development environment is Java using the Swing components and the Pi4J GPIO library.
