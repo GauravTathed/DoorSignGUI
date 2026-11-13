@@ -4,7 +4,7 @@
 
 The current Raspberry Pi touchscreen, HDMI relay, and Windows controller are in [lab-status-display](lab-status-display/README.md).
 
-[Download QuDit Lab Remote for Windows x64](https://github.com/GauravTathed/DoorSignGUI/releases/download/qudit-door-v1.0.1/QuDit-Lab-Remote-Windows-x64.zip)
+[Download QuDit Lab Remote for Windows x64](https://github.com/GauravTathed/DoorSignGUI/releases/latest/download/QuDit-Lab-Remote-Windows-x64.zip)
 
 ## Original Java door sign
 

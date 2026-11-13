@@ -40,6 +40,9 @@ def dashboard_reply(request, snapshot, set_field, set_ion):
         value = request.get("value")
         if not isinstance(key, str) or key not in controls["fields"] or type(value) is not bool:
             return error("Invalid dashboard status")
+        if key in controls.get("automatic", ()):
+            source = "the Paladin controller" if key == "class4" else "the wavemeter"
+            return error(f"{controls['fields'][key][0]} is updated by {source}.")
         if "expected" not in request or request["expected"] is not state[key]:
             return error("This tile changed on the Pi. Review its status and try again.")
         if key == controls.get("lock_status") and state["lock"] is not True:

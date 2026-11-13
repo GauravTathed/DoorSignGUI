@@ -110,6 +110,7 @@ class RemoteApp:
         self.pending = False
         self.state = None
         self.controls = None
+        self.paladin = {}
         self.tiles = {}
         self.ion_buttons = {}
         self.isotope_buttons = []
@@ -197,6 +198,7 @@ class RemoteApp:
                 self.connected = False
                 self.pending = False
                 self.state = None
+                self.paladin = {}
                 self.set_login_enabled(True)
                 self.connection_button.configure(text="Connect", state="normal")
                 self.feedback.configure(text=payload, fg=MUTED if payload == "Disconnected" else "#8f202b")
@@ -212,6 +214,7 @@ class RemoteApp:
                 self.controls = payload["controls"]
                 self.build_board()
             self.state = payload["state"]
+            self.paladin = payload.get("paladin", {})
             if kind == "action":
                 self.pending = False
                 success = payload["ok"]
@@ -308,16 +311,26 @@ class RemoteApp:
         state = self.state or {}
         enabled = "normal" if self.connected and not self.pending else "disabled"
         lock_status = self.controls.get("lock_status")
+        automatic = self.controls.get("automatic", ())
+        simulated = self.paladin.get("simulated_shutter")
         for key, tile in self.tiles.items():
             title, on, off = self.controls["fields"][key]
             value = state.get(key)
             status = "—" if not self.state else "UNKNOWN" if value is None else on if value else off
             if value and key in self.controls["locked"]:
                 status = f"{status}  ·  LOCKED"
+            if key == "class4" and simulated is not None:
+                status += "\nSIM OPEN" if simulated else "\nSIM CLOSED"
             color = self.controls["colors"].get(key, (TEAL,))[0]
             background, foreground = (color, "#fffdf7") if value else (SURFACE, color)
-            tile_state = "disabled" if key == lock_status and state.get("lock") is not True else enabled
-            tile.configure(text=f"{title}\n{status}", bg=background, fg=foreground, activebackground=background, activeforeground=foreground, state=tile_state)
+            read_only = key in automatic or (key == lock_status and state.get("lock") is not True)
+            tile.configure(
+                text=f"{title}\n{status}", bg=background, fg=foreground,
+                activebackground=background, activeforeground=foreground,
+                disabledforeground=foreground if key in automatic and self.connected else MUTED,
+                cursor="arrow" if read_only else "hand2",
+                state="disabled" if read_only else enabled,
+            )
         ion = state.get("ion", "unknown")
         self.ion_title.configure(text=self.controls["ion_states"][ion])
         isotope = {"137": "¹³⁷Ba⁺", "138": "¹³⁸Ba⁺"}.get(state.get("species"), "")
@@ -330,7 +343,10 @@ class RemoteApp:
             button.configure(state=enabled)
 
         if self.state and state.get("class4") is not False:
-            text = "DANGER · 532 nm Class 4 laser on" if state["class4"] else "532 nm status unknown"
+            if self.paladin.get("automatic"):
+                text = "DANGER · 532 nm shutter open" if state["class4"] else "532 nm shutter status unknown"
+            else:
+                text = "DANGER · 532 nm Class 4 laser on" if state["class4"] else "532 nm status unknown"
             self.warning.configure(text=text)
             self.warning.pack(fill="x", before=self.board)
         else:

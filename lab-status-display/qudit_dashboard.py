@@ -1,4 +1,4 @@
-"""Manual QuDit Lab door dashboard and SPI touchscreen controls."""
+"""QuDit Lab door dashboard and SPI touchscreen controls."""
 
 import argparse
 from datetime import datetime
@@ -14,8 +14,10 @@ from zoneinfo import ZoneInfo
 from door_sign import Gdk, GLib, Gtk, fullscreen_window, label, open_touchscreen, watch_taps
 from door_feed import FramePublisher
 from ion_display import ION_STATES, SPECIES, IonDisplay
+from paladin_shutter import ENABLE_FILE, read_shutter
 from remote_control import RemoteControlServer, dashboard_reply
 from temperature_display import TemperatureChart
+from wavemeter_status import WAVEMETER_LASERS, WavemeterMonitor
 from gi.repository import GdkPixbuf
 
 
@@ -243,6 +245,10 @@ def dashboard(is_touch, width, height, on_click=None, on_ion=None, *, reset_butt
         content.pack_start(badges, False, False, 0)
         if key == "class4":
             content.pack_start(label("CLASS 4 · 36 W", "class4-note"), False, False, 0)
+            locked = label("", "readout")
+            locked.set_halign(Gtk.Align.CENTER)
+            locked.set_no_show_all(True)
+            content.pack_start(locked, False, False, 0)
         if is_touch:
             card = Gtk.Button()
             card.get_style_context().add_class("tile")
@@ -340,6 +346,9 @@ def install_styles(screen, width, height):
         .qudit .tile.enabled .readout {{ background: #e3f0e9; color: #204b41; }}
         .qudit .tile.unset .readout {{ background: #f5ead2; color: #67471c; }}
         {laser_styles}
+        .qudit .tile.automatic:disabled {{ opacity: 1; }}
+        .qudit .tile.attention .readout {{ background: #ffdf83; color: #522b05; }}
+        .qudit .tile.sweep .readout {{ background: #d7f1e6; color: #124639; }}
         .qudit .tile.enabled.hazard {{ border-color: #8f202b; }}
         .qudit .tile.hazard label {{ color: #fff7ee; }}
         .qudit .tile.hazard .tile-name {{ color: #fff7ee; }}
@@ -381,27 +390,33 @@ def install_styles(screen, width, height):
     Gtk.StyleContext.add_provider_for_screen(screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
 
-def update_door_message(door_message, class4_state, locked):
+def update_door_message(door_message, class4_state, locked, *, paladin=False, simulated=None):
     lower_panel, notice, title, detail, entry_panel, entry_title = door_message
     entry_title.set_text(
         "Please open the door slowly" if class4_state is False else "If authorized to enter, open the door slowly"
     )
     entry_panel.set_visible(locked is True)
-    lower_panel.set_visible_child_name("temperature" if class4_state is False else "warning")
+    simulation_warning = class4_state is False and not paladin and simulated is True
+    show_temperature = class4_state is False and not simulation_warning
+    lower_panel.set_visible_child_name("temperature" if show_temperature else "warning")
     style = notice.get_style_context()
     style.remove_class("hazard")
     style.remove_class("unset")
     if class4_state is True:
         style.add_class("hazard")
-        title.set_text("DANGER · LASER ON")
+        title.set_text("DANGER · SHUTTER OPEN" if paladin else "DANGER · LASER ON")
         detail.set_text("532 nm Class 4 laser · 36 W\nDo not enter without approved laser eyewear. Authorized personnel only.")
     elif class4_state is None:
         style.add_class("unset")
-        title.set_text("532 nm status unknown")
-        detail.set_text("Contact the lab operator before entering.")
+        title.set_text("532 nm shutter status unknown" if paladin else "532 nm status unknown")
+        detail.set_text("Do not enter. Contact the lab operator." if paladin else "Contact the lab operator before entering.")
+    elif simulation_warning:
+        style.add_class("unset")
+        title.set_text("SIMULATION · SHUTTER OPEN")
+        detail.set_text("Paladin Simulator test signal")
 
 
-def run(initial_class4, force_calibration, initial_states, relay=False):
+def run(initial_class4, force_calibration, initial_states, relay=False, wavemeter_host=None, paladin=False):
     display, screen = Gdk.Display.get_default(), Gdk.Screen.get_default()
     if display is None:
         raise RuntimeError("Start the Pi desktop before launching the dashboard")
@@ -432,19 +447,35 @@ def run(initial_class4, force_calibration, initial_states, relay=False):
     saved_ion = initial_states.get("ion")
     ion_state = saved_ion if isinstance(saved_ion, str) else {True: "trapped", False: "empty", None: "unknown"}[saved_ion]
     ion_species = initial_states.get("species") if ion_state == "trapped" else None
+    wavemeter_status = dict.fromkeys(WAVEMETER_LASERS, "UNKNOWN") if wavemeter_host else {}
+    sweeping = False
+    tuned_isotope = None
+    simulated_shutter = None
+    for key in wavemeter_status:
+        states[key] = None
+    automatic = [*wavemeter_status]
+    fields = FIELDS.copy()
+    if paladin:
+        automatic.append("class4")
+        fields["class4"] = ("532 nm shutter", "OPEN", "CLOSED")
+        states["class4"] = None
 
     def update(key):
         state = states[key]
-        _, on, off = FIELDS[key]
+        auto_status = wavemeter_status.get(key)
+        _, on, off = fields[key]
         for cards in (touch_cards, door_cards):
             if key not in cards:
                 continue
             card, value, locked = cards[key]
-            value.set_text("UNKNOWN" if state is None else on if state else off)
+            value.set_text(auto_status or ("UNKNOWN" if state is None else on if state else off))
             if locked is not None and key in LOCKED_LASERS:
-                locked.set_visible(state is True)
+                locked.set_visible(auto_status is None and state is True)
+            if key == "class4":
+                locked.set_text("SIM OPEN" if simulated_shutter is True else "SIM CLOSED")
+                locked.set_visible(simulated_shutter is not None)
             style = card.get_style_context()
-            for css in ("enabled", "unset", "hazard"):
+            for css in ("enabled", "unset", "hazard", "attention", "sweep"):
                 style.remove_class(css)
             if state is None:
                 style.add_class("unset")
@@ -452,6 +483,10 @@ def run(initial_class4, force_calibration, initial_states, relay=False):
                 style.add_class("enabled")
                 if key == "class4":
                     style.add_class("hazard")
+            if auto_status in ("UNLOCKED", "LOCK UNKNOWN", "MODE HOP"):
+                style.add_class("attention")
+            elif auto_status == "SWEEP":
+                style.add_class("sweep")
         power_on = states["lock"] is True
         lock_state = states[LOCK_1762]
         if key in ("lock", LOCK_1762):
@@ -460,10 +495,13 @@ def run(initial_class4, force_calibration, initial_states, relay=False):
             lock_badge.set_text({True: "LOCKED", False: "UNLOCKED", None: "LOCK UNKNOWN"}[lock_state])
             lock_badge.set_visible(power_on)
         if key in ("class4", "lock", LOCK_1762):
-            update_door_message(door_message, states["class4"], power_on and lock_state is True)
+            update_door_message(
+                door_message, states["class4"], power_on and lock_state is True,
+                paladin=paladin, simulated=simulated_shutter,
+            )
 
     def set_field(key, value):
-        if key == LOCK_1762 and states["lock"] is not True:
+        if key in automatic or (key == LOCK_1762 and states["lock"] is not True):
             return
         if states[key] is value:
             return
@@ -477,14 +515,50 @@ def run(initial_class4, force_calibration, initial_states, relay=False):
     def toggle(key):
         set_field(key, not states[key])
 
+    def refresh_ion():
+        for card in (touch_ion, door_ion):
+            card.set_state(ion_state, ion_species, sweeping=sweeping, tuned_isotope=tuned_isotope)
+
     def select_ion(state, species=None):
         nonlocal ion_state, ion_species
         if (state, species) == (ion_state, ion_species):
             return
         ion_state, ion_species = state, species
-        touch_ion.set_state(state, species)
-        door_ion.set_state(state, species)
+        refresh_ion()
         print(f"ion: {state}" + (f" {SPECIES[species]}" if species else ""), flush=True)
+
+    def apply_wavemeter(status, sweep, isotope):
+        nonlocal sweeping, tuned_isotope
+        for key, reading in status.items():
+            if wavemeter_status[key] != reading:
+                wavemeter_status[key] = reading
+                states[key] = None if reading == "UNKNOWN" else True
+                update(key)
+        if (sweeping, tuned_isotope) != (sweep, isotope):
+            sweeping, tuned_isotope = sweep, isotope
+            refresh_ion()
+        return GLib.SOURCE_REMOVE
+
+    def refresh_shutter():
+        nonlocal paladin, simulated_shutter
+        simulation = read_shutter(simulated=True)
+        changed = simulation is not simulated_shutter
+        simulated_shutter = simulation
+        if not paladin and ENABLE_FILE.is_file():
+            paladin = True
+            automatic.append("class4")
+            fields["class4"] = ("532 nm shutter", "OPEN", "CLOSED")
+            make_automatic("class4")
+            changed = True
+            print("Paladin shutter feed enabled", flush=True)
+        if paladin:
+            reading = read_shutter()
+            if reading is not states["class4"]:
+                states["class4"] = reading
+                changed = True
+        if changed:
+            update("class4")
+        return GLib.SOURCE_CONTINUE
 
     reset_button = Gtk.Button(label="Reset display")
     reset_button.set_size_request(112, 38)
@@ -492,6 +566,14 @@ def run(initial_class4, force_calibration, initial_states, relay=False):
     reset_button.connect("clicked", reset_touchscreen)
     controls, touch_cards, _, touch_ion = dashboard(True, 480, 320, toggle, select_ion, reset_button=reset_button)
     door, door_cards, door_message, door_ion = dashboard(False, door_width, door_height)
+
+    def make_automatic(key):
+        tile = touch_cards[key][0]
+        tile.set_sensitive(False)
+        tile.get_style_context().add_class("automatic")
+
+    for key in automatic:
+        make_automatic(key)
     touch_buttons = [card for card, _, _ in touch_cards.values()]
     touch_buttons.extend(touch_ion.buttons.values())
     touch_buttons.extend(touch_ion.species_buttons)
@@ -566,8 +648,9 @@ def run(initial_class4, force_calibration, initial_states, relay=False):
 
     def touch_disconnected():
         for key in states:
-            states[key] = None
-            update(key)
+            if key not in automatic:
+                states[key] = None
+                update(key)
         select_ion("unknown")
         controls.set_sensitive(False)
         hint.set_text("Touchscreen disconnected")
@@ -575,9 +658,9 @@ def run(initial_class4, force_calibration, initial_states, relay=False):
         stack.set_visible_child_name("calibration")
 
     controls_spec = {
-        "fields": FIELDS,
         "lasers": LASERS,
-        "locked": LOCKED_LASERS,
+        "locked": [key for key in LOCKED_LASERS if key not in wavemeter_status],
+        "automatic": automatic,
         "lock_status": LOCK_1762,
         "colors": {**LASER_COLORS, LOCK_1762: LASER_COLORS["lock"]},
         "ion_states": ION_STATES,
@@ -585,19 +668,29 @@ def run(initial_class4, force_calibration, initial_states, relay=False):
     }
 
     def snapshot():
-        return {"state": {**states, "ion": ion_state, "species": ion_species}, "controls": controls_spec}
+        # The installed Windows client already displays the server's per-tile labels.
+        current_fields = {**fields, **{
+            key: (FIELDS[key][0], reading, FIELDS[key][2])
+            for key, reading in wavemeter_status.items()
+        }}
+        return {
+            "state": {**states, "ion": ion_state, "species": ion_species},
+            "controls": {**controls_spec, "fields": current_fields},
+            "wavemeter": {"statuses": dict(wavemeter_status), "sweeping": sweeping, "tuned_isotope": tuned_isotope},
+            "paladin": {"automatic": paladin, "simulated_shutter": simulated_shutter},
+        }
 
     fd = open_touchscreen()
     remote = None
     publisher = None
+    monitor = None
     try:
         watch_taps(fd, tap, touch_disconnected, with_position=True)
         for window in (controller_window, door_window):
             window.show_all()
         for key in states:
             update(key)
-        touch_ion.set_state(ion_state, ion_species)
-        door_ion.set_state(ion_state, ion_species)
+        refresh_ion()
         stack.set_visible_child_name("controls" if position_map else "calibration")
         try:
             remote = RemoteControlServer(
@@ -610,9 +703,15 @@ def run(initial_class4, force_calibration, initial_states, relay=False):
         if relay:
             publisher = FramePublisher(door_window, GLib)
             print("Door relay feed ready", flush=True)
+        if wavemeter_host:
+            monitor = WavemeterMonitor(wavemeter_host, lambda *status: GLib.idle_add(apply_wavemeter, *status))
+        refresh_shutter()
+        GLib.timeout_add(250, refresh_shutter)
         print(f"QuDit dashboard ready ({'calibrated' if position_map else 'awaiting calibration'})", flush=True)
         Gtk.main()
     finally:
+        if monitor is not None:
+            monitor.stop.set()
         if publisher is not None:
             publisher.close()
         if remote is not None:
@@ -643,6 +742,8 @@ if __name__ == "__main__":
     parser.add_argument("--class4", choices=("on", "off", "unknown"), default="unknown")
     parser.add_argument("--calibrate", action="store_true")
     parser.add_argument("--relay", action="store_true", help="Render the door display for the relay Pi")
+    parser.add_argument("--wavemeter", metavar="HOST", help="Read automatic laser status from IonControl")
+    parser.add_argument("--paladin", action="store_true", help="Use the Paladin shutter feed for the 532 nm tile")
     parser.add_argument("--initial-states", type=read_initial_states, default={})
     args = parser.parse_args()
-    run(args.class4, args.calibrate, args.initial_states, args.relay)
+    run(args.class4, args.calibrate, args.initial_states, args.relay, args.wavemeter, args.paladin)

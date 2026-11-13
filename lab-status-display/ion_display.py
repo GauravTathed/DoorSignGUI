@@ -220,6 +220,7 @@ class IonDisplay:
         self.buttons = {}
         self.species_buttons = []
         self.isotope_rise = "3pt" if is_touch else "8pt"
+        self.graphic_state = None
         self.graphic = TrapGraphic(68 if is_touch else min(220, max(72, width // 9)), allow_clip=not is_touch)
         self.widget = Gtk.EventBox()
         self.widget.get_style_context().add_class("ion-card")
@@ -287,22 +288,30 @@ class IonDisplay:
         button.get_style_context().add_class("ion-action")
         return button
 
-    def set_state(self, state, species=None):
-        self.title.set_text(ION_STATES[state])
+    def set_state(self, state, species=None, *, sweeping=False, tuned_isotope=None):
+        inferred_sweep = sweeping and state in ("unknown", "empty")
+        self.title.set_text("Trapping sweep" if inferred_sweep else ION_STATES[state])
         detail = ""
-        if state == "trapping":
+        if state != "trapped" and tuned_isotope:
+            detail = f"{SPECIES[tuned_isotope]} tuning"
+        elif state == "trapping":
             detail = "Ablation pulse"
         elif state == "trapped" and species:
             raised = f'<span size="72%" rise="{self.isotope_rise}">'
             detail = f"{raised}{species}</span>Ba{raised}+</span>"
+        if sweeping and state == "trapped":
+            detail += " · Red sweep" if detail else "Red sweep"
         self.detail.set_markup(detail)
         self.detail.set_visible(bool(detail))
-        self.graphic.set_state(state)
+        graphic_state = state if state in ("trapping", "trapped") else "empty"
+        if graphic_state != self.graphic_state:
+            self.graphic.set_state(graphic_state)
+            self.graphic_state = graphic_state
 
         style = self.widget.get_style_context()
         for name in ION_STATES:
             style.remove_class(name)
-        style.add_class(state)
+        style.add_class("trapping" if inferred_sweep else state)
         for name, button in self.buttons.items():
             if name == state:
                 button.get_style_context().add_class("selected")

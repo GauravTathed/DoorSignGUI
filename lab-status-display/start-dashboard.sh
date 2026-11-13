@@ -28,7 +28,15 @@ if ! wlr-randr --output SPI-1 --on --custom-mode 320x480@30Hz --transform 90 --s
     printf 'Could not set the touchscreen mode. See %s/qudit_dashboard.log\n' "$PWD" >&2
     exit 1
 fi
-nohup python3 -B qudit_dashboard.py >>qudit_dashboard.log 2>&1 </dev/null 9>&- &
+wavemeter_host="${QUDIT_WAVEMETER_HOST-senkolab-laser.local}"
+source_args=()
+if [[ -n "$wavemeter_host" ]]; then
+    source_args+=(--wavemeter "$wavemeter_host")
+fi
+if [[ -f .paladin-enabled ]]; then
+    source_args+=(--paladin)
+fi
+nohup python3 -B qudit_dashboard.py "${source_args[@]}" "$@" >>qudit_dashboard.log 2>&1 </dev/null 9>&- &
 dashboard_pid=$!
 sleep 1
 if ! kill -0 "$dashboard_pid" 2>/dev/null; then

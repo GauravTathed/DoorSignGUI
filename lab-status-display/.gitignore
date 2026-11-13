@@ -4,3 +4,4 @@ __pycache__/
 *.tmp
 .door-viewer.lock
 touch-calibration.json
+.paladin-enabled
