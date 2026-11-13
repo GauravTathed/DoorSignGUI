@@ -1,6 +1,6 @@
 # DoorSignGUI
 
-## QuDit Lab status display
+## QuDit Lab status display v1.2.0
 
 The current Raspberry Pi touchscreen, HDMI relay, and Windows controller are in [lab-status-display](lab-status-display/README.md).
 
